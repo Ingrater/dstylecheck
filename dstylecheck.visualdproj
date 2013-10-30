@@ -190,6 +190,5 @@
  </Config>
  <Folder name="dstylecheck">
   <File path="main.d" />
-  <File path="runcmd.d" />
  </Folder>
 </DProject>
