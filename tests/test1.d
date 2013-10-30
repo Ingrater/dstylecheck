@@ -12,7 +12,7 @@ class notGood
 		int _notGood3;
 		
 		void BadFunc();
-		void GoodFunc();
+		void goodFunc();
 }
 
 class Good
@@ -35,5 +35,5 @@ struct Good2
 		int _notGood3;
 		
 		void BadFunc();
-		void GoodFunc();
+		void goodFunc();
 }

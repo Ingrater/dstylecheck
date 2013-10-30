@@ -89,12 +89,14 @@ unittest
 
 class DStyleChecker
 {
-private:
-  void delegate(const(char)[]) _sink;
-  uint _numHistoryEntries = 0;
-  JSONValue[1024] _history;
-  uint _numWarnings = 0;
+public:
+  static struct Config
+  {
+    bool checkForTabs;
+    bool checkForCRLF;
+  }
 
+private:
   enum CompositeType
   {
     struct_,
@@ -118,6 +120,13 @@ private:
       _outer._numHistoryEntries--;
     }
   }
+
+  void delegate(const(char)[]) _sink;
+  uint _numHistoryEntries = 0;
+  JSONValue[1024] _history;
+  uint _numWarnings = 0;
+  Config _config;
+  string _rootDir;
 
   void warn(const(char)[] msg)
   {
@@ -200,6 +209,12 @@ private:
   void checkModule(ref JSONValue obj)
   {
     auto h = History(this, obj);
+
+    if(_config.checkForTabs || _config.checkForCRLF)
+    {
+      checkFileContents(obj["file"].str);
+    }
+
     auto moduleNames = obj["name"].str.split(".");
     foreach(moduleName; moduleNames)
     {
@@ -215,11 +230,38 @@ private:
     }
   }
 
+  void checkFileContents(const(char)[] filename)
+  {
+    auto contents = cast(const(char)[])std.file.read(_rootDir ~ filename);
+    bool containsTabs = false, containsCRLF = false;
+    foreach(char c; contents)
+    {
+      if(_config.checkForTabs && c == '\t')
+      {
+        containsTabs = true;
+      }
+      if(_config.checkForCRLF && c == '\r')
+      {
+        containsCRLF = true;
+      }
+    }
+    if(containsTabs)
+    {
+      warn(format("The file '%s' contains tabs. Spaces should be used instead", filename));
+    }
+    if(containsCRLF)
+    {
+      warn(format("The file '%s' contains CRLF line endings. LF line endings should be used instead", filename));
+    }
+  }
+
 public:
 
-  this(void delegate(const(char)[]) sink)
+  this(void delegate(const(char)[]) sink, Config config, string rootDir)
   {
     _sink = sink;
+    _config = config;
+    _rootDir = rootDir;
   }
 
   uint numWarnings() const { return _numWarnings; }
@@ -237,7 +279,7 @@ public:
 unittest
 {
   version(Windows) InitAssertHandler();
-  string[] readFileAndCheck(string filename)
+  string[] readFileAndCheck(string filename, DStyleChecker.Config config)
   {
     auto contents = cast(const(char)[])read(filename);
     string[] result;
@@ -256,7 +298,7 @@ unittest
       }
     }
 
-    auto checker = new DStyleChecker(&testSink);
+    auto checker = new DStyleChecker(&testSink, config, "tests/");
     checker.check(root);
     assert(checker.numWarnings == result.length, "number of warnings does not match number of generated output lines");
     return result;
@@ -272,10 +314,10 @@ unittest
     assert(result.status == 0, "generating json failed");
   } 
 
-  void test(string name, string files, string[] expected)
+  void test(string name, string files, DStyleChecker.Config config, string[] expected)
   {
     compileFiles(files, name ~ ".json");
-    auto result = readFileAndCheck("tests/" ~ name ~ ".json");
+    auto result = readFileAndCheck("tests/" ~ name ~ ".json", config);
     foreach(e; expected)
     {
       if(result.countUntil(e) < 0)
@@ -295,12 +337,14 @@ unittest
     }
   }
 
-  test("test0", "Badmodule.d",
+  DStyleChecker.Config defaultConfig;
+
+  test("test0", "Badmodule.d", defaultConfig, 
   [
     "The module 'Badmodule' should be all lowercase and only contain the characters [a-z][0-9][_] in Badmodule"
   ]);
 
-  test("test1", "test1.d",
+  string[] expected1 =
   [
     "The class 'notGood' is not PascalCased in test1.notGood",
     "The class member '_NotGood' is not camelCased in test1.notGood",
@@ -310,12 +354,24 @@ unittest
     "The struct member '_NotGood' is not camelCased in test1.Good2",
     "The struct member 'NogGood2' is not camelCased in test1.Good2",
     "The struct member '_notGood3' may not start with a '_' because its public in test1.Good2",
-    "The class member function 'BadFunc' is not camelCased in test1.notGood"
-  ]);
+    "The class member function 'BadFunc' is not camelCased in test1.notGood",
+    "The struct member function 'BadFunc' is not camelCased in test1.Good2",
+  ];
 
-  test("test2", "goodsub/test2.d Badsub/test.d",
+  test("test1", "test1.d", defaultConfig, expected1);
+
+  expected1 ~= "The file 'test1.d' contains tabs. Spaces should be used instead in test1";
+  expected1 ~= "The file 'test1.d' contains CRLF line endings. LF line endings should be used instead in test1";
+
+  DStyleChecker.Config extendedConfig;
+  extendedConfig.checkForTabs = true;
+  extendedConfig.checkForCRLF = true;
+  test("test1-b", "test1.d", extendedConfig, expected1);
+
+  test("test2", "goodsub/test2.d Badsub/test.d", defaultConfig,
   [
     "The interface 'badInterface' is not PascalCased in goodsub.test2.badInterface",
-    "The module 'Badsub' should be all lowercase and only contain the characters [a-z][0-9][_] in Badsub.test"
+    "The module 'Badsub' should be all lowercase and only contain the characters [a-z][0-9][_] in Badsub.test",
+    "The interface member function 'BadFunc' is not camelCased in goodsub.test2.badInterface"
   ]);
 }
