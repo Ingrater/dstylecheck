@@ -14,6 +14,15 @@ import std.string;
 import std.array;
 import std.conv;
 
+debug=log;
+
+string[] keywords = [ "abstract", "alias", "align", "asm", "assert", "auto", "body", "bool", "break", "byte", "case", "cast", "catch", "cdouble", "cent", "cfloat",
+                      "char", "class", "const", "continue", "creal", "dchar", "debug", "default", "delegate", "delete", "deprecated", "do", "double", "else", "enum",
+                      "export", "extern", "false", "final", "finally", "float", "for", "foreach", "foreach_reverse", "function", "goto", "idouble", "if", "ifloat",
+                      "immutable", "import", "in", "inout", "int", "interface", "invariant", "ireal", "is", "lazy", "long", "macro", "mixin", "module", "new",
+                      "nothrow", "null", "out", "override", "package", "pragma", "private", "protected", "public", "pure", "real", "ref", "return", "scope", "shared",
+                      "short", "static", "struct", "super", "switch", "synchronized", "template", "this", "throw", "true", "try", "typedef", "typeid", "typeof",
+                      "ubyte", "ucent", "uint", "ulong", "union", "unittest", "ushort", "version", "void", "volatile", "wchar", "while", "with" ];
 version(Windows)
 {
   extern(Windows) void OutputDebugStringA(LPCTSTR lpOutputStr);
@@ -39,8 +48,50 @@ version(Windows)
   }
 }
 
+bool readConfig(ref DStyleChecker.Config config, const(char)[] filename)
+{
+  auto contents = cast(const(char)[])read(filename);
+  auto root = parseJSON(contents);
+
+  if(root.type != JSON_TYPE.OBJECT)
+  {
+    writefln("The root of a .json config file has to be a json object");
+    return false;
+  }
+
+  if("checkForTabs" in root.object)
+    if(root["checkForTabs"].type == JSON_TYPE.TRUE)
+      config.checkForTabs = true;
+
+  if("checkForCRLF" in root.object)
+    if(root["checkForCRLF"].type == JSON_TYPE.TRUE)
+      config.checkForCRLF = true;
+
+  return true;
+}
+
 int main(string[] argv)
 {
+  DStyleChecker.Config config;
+  readConfig(config, "config.json");
+  auto checker = new DStyleChecker((str){ write(str); }, config, "");
+  string root = "";
+  if(argv.length == 1)
+  {
+    writefln("no files given");
+    return 1;
+  }
+  foreach(file; argv[1..$])
+  {
+    if(!file.endsWith(".json"))
+    {
+      writefln("Don't know how to handle %s", file);
+      return 1;
+    }
+    auto contents = cast(const(char)[])std.file.read(root ~ file);
+    auto json = parseJSON(contents);
+    checker.check(json);
+  }
   return 0;
 }
 
@@ -159,6 +210,9 @@ private:
       case "module":
         checkModule(obj);
         break;
+      case "enum":
+        checkEnum(obj);
+        break;
       default:
     }
   }
@@ -202,6 +256,7 @@ private:
           }
           break;
         default:
+          checkValue(member);
       }
     }
   }
@@ -255,6 +310,26 @@ private:
     }
   }
 
+  void checkEnum(ref JSONValue obj)
+  {
+    auto h = History(this, obj);
+    foreach(ref member; obj["members"].array)
+    {
+      auto memberName = member["name"].str;
+      if(memberName[$-1] == '_')
+      {
+        if(keywords.countUntil(memberName[0..$-1]) < 0)
+        {
+          warn(format("The enum member '%s' may not end with a '_'. Only keywords may end with a '_'", memberName));
+        }
+      }
+      else if(!memberName.isCamelCase)
+      {
+        warn(format("The enum member '%s' is not camelCased", memberName));
+      }
+    }
+  }
+
 public:
 
   this(void delegate(const(char)[]) sink, Config config, string rootDir)
@@ -293,7 +368,7 @@ unittest
       if(current[$-1] == '\n')
       {
         result ~= current[0..$-1];
-        write("out: ", current);
+        debug(log) write("out: ", current);
         current = "";
       }
     }
@@ -309,7 +384,7 @@ unittest
     if(std.file.exists("tests/" ~ jsonName))
       std.file.remove("tests/" ~ jsonName);
     auto cmd = "cd tests && dmd -c -X -Xf" ~ jsonName ~ " " ~ files;
-    writeln("executing: ", cmd);
+    debug(log) writeln("executing: ", cmd);
     auto result = executeShell(cmd);
     assert(result.status == 0, "generating json failed");
   } 
@@ -356,6 +431,11 @@ unittest
     "The struct member '_notGood3' may not start with a '_' because its public in test1.Good2",
     "The class member function 'BadFunc' is not camelCased in test1.notGood",
     "The struct member function 'BadFunc' is not camelCased in test1.Good2",
+    "The enum member 'BadValue' is not camelCased in test1.TestEnum",
+    "The enum member 'BADVALUE2' is not camelCased in test1.TestEnum",
+    "The enum member 'badValue3_' may not end with a '_'. Only keywords may end with a '_' in test1.TestEnum",
+    "The enum member 'badValue4__' may not end with a '_'. Only keywords may end with a '_' in test1.TestEnum",
+    "The enum member 'BadValue' is not camelCased in test1.Good2.TestEnum"
   ];
 
   test("test1", "test1.d", defaultConfig, expected1);
