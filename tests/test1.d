@@ -44,6 +44,14 @@ struct Good2
 		}
 }
 
+struct Good3(T, size_t size)
+{
+  enum badEnum : T
+  {
+    bad_Value
+  }
+}
+
 enum TestEnum
 {
 	BadValue,
